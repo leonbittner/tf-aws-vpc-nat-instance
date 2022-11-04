@@ -1,6 +1,6 @@
 # AWS VPC Terraform module
 
-Terraform module which creates VPC resources on AWS.
+Terraform module which creates VPC resources on AWS. Uses a NAT Instance powered by https://fck-nat.dev/ instead of a NAT Gateway.
 
 [![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
 
