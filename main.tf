@@ -285,7 +285,7 @@ resource "aws_route" "database_nat_gateway" {
 
   route_table_id         = element(aws_route_table.database[*].id, count.index)
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = element(aws_nat_gateway.this[*].id, count.index)
+  network_interface_id         = element(aws_instance.fcknat[*].primary_network_interface_id, count.index)
 
   timeouts {
     create = "5m"
@@ -1005,6 +1005,18 @@ locals {
   nat_gateway_ips = var.reuse_nat_ips ? var.external_nat_ip_ids : try(aws_eip.nat[*].id, [])
 }
 
+data "aws_ami" "fcknat" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["fck-nat-amzn2-*"]
+  }
+
+  owners = ["568608671756"] # Canonical
+}
+
+
 resource "aws_eip" "nat" {
   count = local.create_vpc && var.enable_nat_gateway && false == var.reuse_nat_ips ? local.nat_gateway_count : 0
 
@@ -1022,13 +1034,16 @@ resource "aws_eip" "nat" {
   )
 }
 
-resource "aws_nat_gateway" "this" {
+resource "aws_instance" "fcknat" {
   count = local.create_vpc && var.enable_nat_gateway ? local.nat_gateway_count : 0
+  
+  ami           = data.aws_ami.fcknat.id
+  instance_type = "t4g.nano"
 
-  allocation_id = element(
-    local.nat_gateway_ips,
-    var.single_nat_gateway ? 0 : count.index,
-  )
+  source_dest_check = false
+
+  vpc_security_group_ids = [aws_security_group.fcknat.id]
+
   subnet_id = element(
     aws_subnet.public[*].id,
     var.single_nat_gateway ? 0 : count.index,
@@ -1037,7 +1052,7 @@ resource "aws_nat_gateway" "this" {
   tags = merge(
     {
       "Name" = format(
-        "${var.name}-%s",
+        "${var.name}-nat-%s",
         element(var.azs, var.single_nat_gateway ? 0 : count.index),
       )
     },
@@ -1048,12 +1063,51 @@ resource "aws_nat_gateway" "this" {
   depends_on = [aws_internet_gateway.this]
 }
 
+resource "aws_security_group" "fcknat" {
+  name        = "Nat Instance Security Group"
+  description = "Allow all VPC inbound traffic"
+  vpc_id      = aws_vpc.this[0].id
+
+  ingress {
+    description      = "Traffic from VPC"
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = [aws_vpc.this[0].cidr_block]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = merge(
+    {
+      "Name" = "NAT Instance Security Group"
+    },
+    var.tags,
+    var.nat_gateway_tags,
+  )
+}
+
+resource "aws_eip_association" "eip_assoc" {
+  count = local.create_vpc && var.enable_nat_gateway ? local.nat_gateway_count : 0
+  instance_id   = element(aws_instance.fcknat[*].id, count.index)
+  allocation_id = element(
+    local.nat_gateway_ips,
+    var.single_nat_gateway ? 0 : count.index,
+  )
+}
+
 resource "aws_route" "private_nat_gateway" {
   count = local.create_vpc && var.enable_nat_gateway ? local.nat_gateway_count : 0
 
   route_table_id         = element(aws_route_table.private[*].id, count.index)
   destination_cidr_block = var.nat_gateway_destination_cidr_block
-  nat_gateway_id         = element(aws_nat_gateway.this[*].id, count.index)
+  network_interface_id         = element(aws_instance.fcknat[*].primary_network_interface_id, count.index)
 
   timeouts {
     create = "5m"
